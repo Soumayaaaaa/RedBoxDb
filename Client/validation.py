@@ -67,9 +67,9 @@ class TestSuite:
         print(f"\n{'='*50}")
         print(f"  RESULTS: {self.passed}/{total} passed", end="")
         if self.failed == 0:
-            print("  ✓ ALL CLEAR")
+            print("ALL CLEAR")
         else:
-            print(f"  ✗ {self.failed} FAILED")
+            print(f"{self.failed} FAILED")
         print(f"{'='*50}")
 
 
