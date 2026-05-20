@@ -74,8 +74,13 @@ void handle_client(SOCKET client_socket, SharedState& state) {
             uint32_t requested_dim = 0;
             if (!recv_all((char*)&requested_dim, 4)) break;
 
+            uint32_t requested_capacity = 0;
+            if (!recv_all((char*)&requested_capacity, 4)) break;
+
             std::cout << "[SERVER] Req DB: " << db_name
                 << " (Dim: " << requested_dim << ")\n";
+            std::cout << "[SERVER] Req Capacity: " << db_name
+                << " (Capacity: " << requested_capacity << ")\n";
 
             {
                 // Lock catalog only long enough to load/create the entry
@@ -85,7 +90,7 @@ void handle_client(SOCKET client_socket, SharedState& state) {
                     std::cout << "   -> New/Loading...\n";
                     std::string filename = db_name + ".db";
                     state.catalog[db_name] = std::make_unique<CoreEngine::RedBoxVector>(
-                        filename, requested_dim, 100000);
+                        filename, requested_dim, (int)requested_capacity);
                     state.db_mutexes[db_name] = std::make_unique<std::mutex>();
                 }
 
