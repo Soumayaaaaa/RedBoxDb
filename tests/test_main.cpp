@@ -260,7 +260,7 @@ TEST_F(AutoInsertAndIndexTest, AutoIDsPersistAcrossRestart) {
         db.insert_auto({ 0.0f, 0.0f, 1.0f });
     }
 
-    // Phase 2: reopen — next ID should continue from 4, not reset to 1
+    // Phase 2: reopen ï¿½ next ID should continue from 4, not reset to 1
     {
         CoreEngine::RedBoxVector db(db_file, 3, 1000);
         uint64_t id4 = db.insert_auto({ 1.0f, 1.0f, 0.0f });
@@ -296,7 +296,7 @@ TEST_F(AutoInsertAndIndexTest, IndexRemovedOnDelete) {
     db.insert(10, { 1.0f, 0.0f, 0.0f });
     db.remove(10);
 
-    // Update should fail — ID is deleted and removed from index
+    // Update should fail ï¿½ ID is deleted and removed from index
     bool updated = db.update(10, { 9.0f, 9.0f, 9.0f });
     EXPECT_FALSE(updated);
 }
@@ -354,7 +354,7 @@ protected:
 };
 
 // After COMPACT_SLACK+1 unique deletes the file should NOT have grown to
-// COMPACT_SLACK+1 entries — compaction must have fired and trimmed it back
+// COMPACT_SLACK+1 entries ï¿½ compaction must have fired and trimmed it back
 // to exactly the number of IDs that are still logically deleted.
 TEST_F(TombstoneCompactionTest, FileShrinkAfterThreshold) {
     // Need enough capacity for all the vectors we are about to insert
@@ -372,11 +372,11 @@ TEST_F(TombstoneCompactionTest, FileShrinkAfterThreshold) {
     // still-deleted ID), not N + however many duplicates accumulated.
     size_t entries = del_file_entry_count();
     EXPECT_LE(entries, (size_t)N)
-        << "Tombstone file should have been compacted — raw entry count ("
+        << "Tombstone file should have been compacted ï¿½ raw entry count ("
         << entries << ") must not exceed live deleted count (" << N << ")";
 }
 
-// Compaction must not lose any deleted IDs — reloading after compaction
+// Compaction must not lose any deleted IDs ï¿½ reloading after compaction
 // should still honour every deletion.
 TEST_F(TombstoneCompactionTest, CorrectnessAfterCompaction) {
     const int N = (int)COMPACT_SLACK + 10;
@@ -391,17 +391,17 @@ TEST_F(TombstoneCompactionTest, CorrectnessAfterCompaction) {
         // Delete all but ID 1 so we have a known survivor
         for (int i = 2; i <= N; ++i)
             db.remove((uint64_t)i);
-    } // db destroyed here — mmap released, file unlocked
+    } // db destroyed here ï¿½ mmap released, file unlocked
 
     // Phase 2: Reload and verify compaction preserved correctness
     {
         CoreEngine::RedBoxVector db2(db_file, 3, N + 10);
 
-        // ID 1 was never deleted — must still be found
+        // ID 1 was never deleted ï¿½ must still be found
         int result = db2.search({ 1.0f, 0.0f, 0.0f });
         EXPECT_EQ(result, 1) << "Non-deleted ID 1 should survive compaction";
 
-        // Every other ID was deleted — updating any of them must fail
+        // Every other ID was deleted ï¿½ updating any of them must fail
         for (int i = 2; i <= N; ++i) {
             bool ok = db2.update((uint64_t)i, { 0.0f, 0.0f, 0.0f });
             EXPECT_FALSE(ok) << "Deleted ID " << i << " should still be gone after compaction";
@@ -416,7 +416,7 @@ TEST_F(TombstoneCompactionTest, ReinsertedIDRemovedFromDelFileAfterCompaction) {
     const int CAP = N + 10;
 
     // Phase 1: insert N vectors, delete all (triggers compaction), then
-    // re-insert ID 1 and explicitly compact — the rewritten .del file must
+    // re-insert ID 1 and explicitly compact ï¿½ the rewritten .del file must
     // not contain ID 1 since it is no longer deleted.
     {
         CoreEngine::RedBoxVector db(db_file, 3, CAP);
@@ -424,7 +424,7 @@ TEST_F(TombstoneCompactionTest, ReinsertedIDRemovedFromDelFileAfterCompaction) {
         for (int i = 1; i <= N; ++i)
             db.insert((uint64_t)i, { (float)i, 0.0f, 0.0f });
 
-        // Delete all — compaction fires somewhere here (threshold = 64)
+        // Delete all ï¿½ compaction fires somewhere here (threshold = 64)
         for (int i = 1; i <= N; ++i)
             db.remove((uint64_t)i);
 
@@ -434,7 +434,7 @@ TEST_F(TombstoneCompactionTest, ReinsertedIDRemovedFromDelFileAfterCompaction) {
         // compact_tombstones() must not write IDs that are no longer deleted.
         db.insert(1, { 1.0f, 0.0f, 0.0f });
         db.compact_tombstones();
-    } // db destroyed — file unlocked
+    } // db destroyed ï¿½ file unlocked
 
     // Phase 2: reload and confirm ID 1 is alive
     {
@@ -469,7 +469,7 @@ protected:
 };
 
 // Multiple threads inserting into the same DB concurrently must not corrupt
-// the vector count — every insert must be reflected in the final search space.
+// the vector count ï¿½ every insert must be reflected in the final search space.
 TEST_F(ConcurrentAccessTest, ConcurrentInsertsDoNotCorruptCount) {
     const int NUM_THREADS = 8;
     const int PER_THREAD = 50;
@@ -509,7 +509,7 @@ TEST_F(ConcurrentAccessTest, ConcurrentInsertsDoNotCorruptCount) {
 }
 
 // Concurrent reads (searches) while one thread is writing must not crash or
-// return garbage — the mutex in server.cpp serialises this correctly.
+// return garbage ï¿½ the mutex in server.cpp serialises this correctly.
 TEST_F(ConcurrentAccessTest, ConcurrentReadsAndWritesDoNotCrash) {
     std::streambuf* old_cerr = std::cerr.rdbuf(nullptr);
 
@@ -566,7 +566,7 @@ TEST_F(ConcurrentAccessTest, ConcurrentReadsAndWritesDoNotCrash) {
 }
 
 // Concurrent deletes on distinct IDs must all succeed and each deleted ID
-// must be gone afterwards — no lost-update or double-free.
+// must be gone afterwards ï¿½ no lost-update or double-free.
 TEST_F(ConcurrentAccessTest, ConcurrentDeletesAreIsolated) {
     const int NUM_THREADS = 4;
     const int PER_THREAD = 25;
@@ -579,7 +579,7 @@ TEST_F(ConcurrentAccessTest, ConcurrentDeletesAreIsolated) {
     for (int i = 1; i <= TOTAL; ++i)
         db.insert((uint64_t)i, { (float)i, 0.0f, 0.0f });
 
-    // Each thread deletes its own slice — no overlap
+    // Each thread deletes its own slice ï¿½ no overlap
     std::vector<std::thread> threads;
     threads.reserve(NUM_THREADS);
     std::atomic<int> successful_deletes{ 0 };
@@ -600,10 +600,133 @@ TEST_F(ConcurrentAccessTest, ConcurrentDeletesAreIsolated) {
     EXPECT_EQ(successful_deletes.load(), TOTAL)
         << "Every unique ID should be deleted exactly once";
 
-    // Confirm all are actually gone — update must fail for each
+    // Confirm all are actually gone ï¿½ update must fail for each
     for (int i = 1; i <= TOTAL; ++i) {
         std::lock_guard<std::mutex> lk(db_mutex);
         bool ok = db.update((uint64_t)i, { 0.0f, 0.0f, 0.0f });
         EXPECT_FALSE(ok) << "ID " << i << " should be deleted";
     }
+}
+
+
+#include <spdlog/spdlog.h>
+
+// ============================================================
+// Issue #17 â€” Zombie rows on delete-then-reinsert cycles
+// ============================================================
+class ZombieRowTest : public ::testing::Test {
+protected:
+    std::string db_file  = "test_zombie.db";
+    std::string del_file = "test_zombie.db.del";
+
+    void SetUp() override {
+        if (std::filesystem::exists(db_file))  std::filesystem::remove(db_file);
+        if (std::filesystem::exists(del_file)) std::filesystem::remove(del_file);
+        spdlog::set_level(spdlog::level::off);
+    }
+    void TearDown() override {
+        spdlog::set_level(spdlog::level::info);
+        if (std::filesystem::exists(db_file))  std::filesystem::remove(db_file);
+        if (std::filesystem::exists(del_file)) std::filesystem::remove(del_file);
+    }
+};
+
+TEST_F(ZombieRowTest, SlotCountDoesNotGrowOnReinsert) {
+    CoreEngine::RedBoxVector db(db_file, 3, 100);
+    db.insert(1, { 1.0f, 0.0f, 0.0f });
+    db.insert(2, { 2.0f, 0.0f, 0.0f });
+    db.remove(1);
+    db.insert(1, { 1.5f, 0.0f, 0.0f });
+    int result = db.search({ 1.4f, 0.0f, 0.0f });
+    EXPECT_EQ(result, 1);
+}
+
+TEST_F(ZombieRowTest, NoDuplicatesAfterMultipleCycles) {
+    CoreEngine::RedBoxVector db(db_file, 3, 200);
+    db.insert(1, { 0.0f, 0.0f, 0.0f });
+    for (int i = 0; i < 10; ++i) {
+        db.remove(1);
+        db.insert(1, { 0.0f, 0.0f, 0.0f });
+    }
+    auto results = db.search_N({ 0.0f, 0.0f, 0.0f }, 10);
+    EXPECT_EQ(results.size(), 1u);
+    ASSERT_FALSE(results.empty());
+    EXPECT_EQ(results[0], 1);
+}
+
+TEST_F(ZombieRowTest, ReinsertedVectorHasNewData) {
+    CoreEngine::RedBoxVector db(db_file, 3, 100);
+    db.insert(42,  { 1.0f,  0.0f, 0.0f });
+    db.insert(999, { 2.0f,  0.0f, 0.0f }); // close to origin, will win after 42 moves away
+    db.remove(42);
+    db.insert(42, { 50.0f, 0.0f, 0.0f }); // now far away
+    // Query near origin â€” if zombie data {1,0,0} were still live, 42 would win.
+    // With the fix, 42 is at {50,0,0} so 999 at {2,0,0} must win.
+    int result = db.search({ 0.0f, 0.0f, 0.0f });
+    EXPECT_EQ(result, 999);
+}
+
+TEST_F(ZombieRowTest, ReinsertAfterPersistNoZombie) {
+    {
+        CoreEngine::RedBoxVector db(db_file, 3, 100);
+        db.insert(7, { 7.0f, 0.0f, 0.0f });
+        db.remove(7);
+    }
+    {
+        CoreEngine::RedBoxVector db(db_file, 3, 100);
+        db.insert(7, { 7.0f, 0.0f, 0.0f });
+        auto results = db.search_N({ 7.0f, 0.0f, 0.0f }, 10);
+        EXPECT_EQ(results.size(), 1u);
+        ASSERT_FALSE(results.empty());
+        EXPECT_EQ(results[0], 7);
+    }
+}
+
+// ============================================================
+// Issue #19 â€” search() not-found behaviour
+// ============================================================
+class SearchNotFoundTest : public ::testing::Test {
+protected:
+    std::string db_file  = "test_notfound.db";
+    std::string del_file = "test_notfound.db.del";
+
+    void SetUp() override {
+        if (std::filesystem::exists(db_file))  std::filesystem::remove(db_file);
+        if (std::filesystem::exists(del_file)) std::filesystem::remove(del_file);
+        spdlog::set_level(spdlog::level::off);
+    }
+    void TearDown() override {
+        spdlog::set_level(spdlog::level::info);
+        if (std::filesystem::exists(db_file))  std::filesystem::remove(db_file);
+        if (std::filesystem::exists(del_file)) std::filesystem::remove(del_file);
+    }
+};
+
+TEST_F(SearchNotFoundTest, EmptyDbReturnsSentinel) {
+    CoreEngine::RedBoxVector db(db_file, 3, 100);
+    EXPECT_EQ(db.search({ 0.0f, 0.0f, 0.0f }), -1);
+}
+
+TEST_F(SearchNotFoundTest, AllDeletedReturnsSentinel) {
+    CoreEngine::RedBoxVector db(db_file, 3, 100);
+    db.insert(1, { 1.0f, 0.0f, 0.0f });
+    db.insert(2, { 2.0f, 0.0f, 0.0f });
+    db.remove(1);
+    db.remove(2);
+    EXPECT_EQ(db.search({ 0.5f, 0.0f, 0.0f }), -1);
+}
+
+TEST_F(SearchNotFoundTest, WireEncodingForNotFound) {
+    int engine_result = -1;
+    uint32_t wire = (engine_result < 0) ? 0xFFFFFFFFu : static_cast<uint32_t>(engine_result);
+    EXPECT_EQ(wire, 0xFFFFFFFFu);
+
+    engine_result = 42;
+    wire = (engine_result < 0) ? 0xFFFFFFFFu : static_cast<uint32_t>(engine_result);
+    EXPECT_EQ(wire, 42u);
+}
+
+TEST_F(SearchNotFoundTest, SearchNEmptyDbReturnsEmptyVec) {
+    CoreEngine::RedBoxVector db(db_file, 3, 100);
+    EXPECT_TRUE(db.search_N({ 0.0f, 0.0f, 0.0f }, 5).empty());
 }

@@ -7,6 +7,7 @@ target_link_libraries(RedBoxDbTests
         gtest
         gtest_main
         RedBoxDbLib
+        spdlog::spdlog
 )
 
 set_project_warnings(RedBoxDbTests)

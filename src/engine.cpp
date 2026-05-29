@@ -10,6 +10,7 @@
 #include "redboxdb/cpu_features.hpp"
 #include "redboxdb/distance.hpp"
 #include "redboxdb/cluster_manager.hpp"
+#include "redboxdb/logger.hpp"
 #include <cstring>
 
 
@@ -45,20 +46,65 @@ namespace CoreEngine {
         if (_manager->is_cluster_initialized()) {
             size_t max_cluster = 0;
             for (auto& v : cluster_index) max_cluster = std::max(max_cluster, v.size());
-            std::cout << "[DB] Max cluster size: " << max_cluster << "\n";
+            Log::info("Max cluster size: " + std::to_string(max_cluster));
         }
 
-        std::cout << "[DB] AVX2: " << (use_avx2 ? "enabled" : "disabled")
-                  << " | Threads: " << num_threads
-                  << " | Clusters: " << static_cast<int>(_manager->get_num_clusters())
-                  << " | Probes: "   << static_cast<int>(_manager->get_num_probes()) << "\n";
+        Log::info("AVX2: " + std::string(use_avx2 ? "enabled" : "disabled")
+                  + " | Threads: " + std::to_string(num_threads)
+                  + " | Clusters: " + std::to_string(static_cast<int>(_manager->get_num_clusters()))
+                  + " | Probes: "   + std::to_string(static_cast<int>(_manager->get_num_probes())));
     }
 
     // -----------------------------------------------------------------------
     void RedBoxVector::insert(uint64_t id, const std::vector<float>& vec) {
+        // --- Issue #17: Zombie-row fix ---
+        // If this ID was previously deleted, check whether we can reuse its old
+        // mmap slot instead of appending a brand-new one.
+        // Without this, every delete-then-reinsert cycle leaks a slot that is
+        // forever flagged deleted but never reclaimed (a "zombie row").
         if (deleted_ids.count(id)) {
             deleted_ids.erase(id);
+
+            // Find the old slot via a reverse scan of id_block.
+            // (id_to_index was erased on delete, so we must walk the mmap.)
+            int old_slot = -1;
+            int total = static_cast<int>(_manager->get_count());
+            for (int i = 0; i < total; ++i) {
+                if (deleted_flags[i] && _manager->get_id(i) == id) {
+                    old_slot = i;
+                    break;
+                }
+            }
+
+            if (old_slot != -1) {
+                // Overwrite the zombie slot in-place — no new slot consumed.
+                float* dst = _manager->get_float_ptr_mut(old_slot);
+                std::memcpy(dst, vec.data(), dimension * sizeof(float));
+
+                // Re-assign cluster
+                uint8_t  k = _manager->get_num_clusters();
+                uint16_t c = 0;
+                if (_manager->is_cluster_initialized()) {
+                    c = ClusterManager::find_nearest_centroid(
+                        vec.data(), _manager->get_centroid_block(),
+                        k, dimension, use_avx2);
+                    ClusterManager::update_centroid(
+                        _manager->get_centroid_block(),
+                        _manager->get_cluster_count_block(),
+                        c, vec.data(), dimension);
+                    cluster_index[c].push_back(old_slot);
+                }
+                _manager->set_cluster(old_slot, c);
+
+                // Resurrect the slot
+                deleted_flags[old_slot] = 0;
+                id_to_index[id] = old_slot;
+                return;
+            }
+            // If the old slot wasn't found for some reason, fall through to a
+            // normal append (shouldn't happen in practice, but be safe).
         }
+
         try {
             uint8_t  k    = _manager->get_num_clusters();
             size_t   slot = _manager->get_count();
@@ -88,7 +134,7 @@ namespace CoreEngine {
                         }
                     }
 
-                    std::cout << "[DB] K-Means++ initialized with K=" << (int)k << "\n";
+                    Log::info("K-Means++ initialized with K=" + std::to_string((int)k));
                 }
             } else {
                 // Normal path: find nearest centroid, assign, update centroid online
@@ -110,7 +156,7 @@ namespace CoreEngine {
             deleted_flags.push_back(0);
         }
         catch (const std::exception& e) {
-            std::cerr << "Insert Error: " << e.what() << "\n";
+            Log::error("Insert failed: " + std::string(e.what()));
         }
     }
 
@@ -121,18 +167,18 @@ namespace CoreEngine {
     }
 
     void RedBoxVector::saveToDisk([[maybe_unused]] const std::string& filename) {
-        std::cout << "-> Persistence handled by StorageManager (Auto-Save active).\n";
+        Log::info("Persistence handled by StorageManager (Auto-Save active).");
     }
 
     void RedBoxVector::loadFromDisk(const std::string& filename) {
-        std::cout << "-> Database attached to: " << filename << "\n";
-        std::cout << "-> Current Record Count: " << _manager->get_count() << "\n";
+        Log::info("Database attached to: " + filename);
+        Log::info("Current Record Count: " + std::to_string(_manager->get_count()));
     }
 
     // -----------------------------------------------------------------------
     int RedBoxVector::search(const std::vector<float>& query) {
         int count = static_cast<int>(_manager->get_count());
-        if (count == 0) return -1;
+        if (count == 0) return -1;   // Issue #19: -1 = not found / empty DB
 
         uint8_t k           = _manager->get_num_clusters();
         uint8_t num_probes  = _manager->get_num_probes();
@@ -174,7 +220,7 @@ namespace CoreEngine {
                 if (!deleted_flags[i]) candidates.push_back(i);
         }
 
-        if (candidates.empty()) return -1;
+        if (candidates.empty()) return -1;  // All slots deleted
 
         // --- Distance scan over candidates only ---
         float min_dist  = 1e9f;
@@ -277,7 +323,7 @@ namespace CoreEngine {
         {
             std::ofstream f(tmp_file, std::ios::binary | std::ios::trunc);
             if (!f.is_open()) {
-                std::cerr << "[DB] compact_tombstones: could not open " << tmp_file << "\n";
+                Log::error("compact_tombstones: could not open " + tmp_file);
                 return;
             }
             for (uint64_t id : deleted_ids) {
@@ -289,14 +335,14 @@ namespace CoreEngine {
             std::filesystem::remove(tombstone_file);
         }
         if (std::rename(tmp_file.c_str(), tombstone_file.c_str()) != 0) {
-            std::cerr << "[DB] compact_tombstones: rename failed\n";
+            Log::error("compact_tombstones: rename failed");
             return;
         }
 
         size_t old_count = tombstone_entries_on_disk;
         tombstone_entries_on_disk = deleted_ids.size();
-        std::cout << "[DB] Tombstone compacted: " << old_count
-            << " entries -> " << tombstone_entries_on_disk << "\n";
+        Log::info("Tombstone compacted: " + std::to_string(old_count)
+            + " entries -> " + std::to_string(tombstone_entries_on_disk));
     }
 
     // -----------------------------------------------------------------------

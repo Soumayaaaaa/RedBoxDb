@@ -123,3 +123,4 @@
 | Update (indexed)      | ~276,000 /sec   | ~0.005 ms   |
 | Mixed workload        | ~8,040 ops/sec  | —           |
 | Heavy deletion search | ~1,980 QPS      | ~0.86 ms    |
+b
