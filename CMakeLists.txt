@@ -6,30 +6,28 @@ project(
     LANGUAGES CXX
 )
 
-# Prevent in-source builds
 if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
     message(FATAL_ERROR "In-source builds are not allowed")
 endif()
 
 include(cmake/StandardProjectSettings.cmake)
-
-add_subdirectory(src)
-add_subdirectory(tests)
-add_subdirectory(benchmark)
-
 include(GNUInstallDirs)
-
 include(FetchContent)
+
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG        v1.15.1
+)
+FetchContent_MakeAvailable(spdlog)
 
 FetchContent_Declare(
     googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
 )
-
-
-# Prevent gtest from overriding your compiler flags
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-
 FetchContent_MakeAvailable(googletest)
 
-
+add_subdirectory(src)
+add_subdirectory(tests)
+add_subdirectory(benchmark)
