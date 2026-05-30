@@ -1,9 +1,10 @@
-﻿#pragma once
+#pragma once
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
 #include <thread>
 #include <algorithm>
+#include <shared_mutex>
 #include "redboxdb/storage_manager.hpp"
 
 namespace CoreEngine {
@@ -13,7 +14,7 @@ namespace CoreEngine {
         static constexpr int     default_capacity      = 1000;
         static constexpr size_t  TOMBSTONE_COMPACT_SLACK = 64;
         static constexpr int     PARALLEL_THRESHOLD    = 50000;
-        static constexpr uint8_t DEFAULT_CLUSTERS      = 255;
+        static constexpr uint16_t  DEFAULT_CLUSTERS      = 1000;
         static constexpr uint8_t DEFAULT_PROBES        = 1;
         static constexpr uint64_t KMEANS_INIT_THRESHOLD = 10000;
 
@@ -24,27 +25,23 @@ namespace CoreEngine {
         // Soft deletion
         std::string tombstone_file;
         std::unordered_set<uint64_t> deleted_ids;
-        size_t tombstone_entries_on_disk = 0; // tracks raw entry count in the file
+        size_t tombstone_entries_on_disk = 0;
 
-        // Hot-path parallel array: deleted_flags[slot] == 1 means that mmap slot
-        // is logically deleted. Indexed by slot position, not by ID.
-        // Replaces the per-row deleted_ids.count() hash lookup in the search loops.
         std::vector<uint8_t> deleted_flags;
 
         std::unordered_map<uint64_t, size_t> id_to_index;
 
-        // In-memory inverted index: cluster_index[c] = list of slot numbers in cluster c.
-        // Built on open from cluster_block, updated on every insert.
-        // Lets search() jump directly to ~1000 candidates without scanning 100k slots.
         std::vector<std::vector<int>> cluster_index;
 
         bool   use_avx2;
         size_t num_threads;
 
+        mutable std::shared_mutex rw_mutex;
+
     public:
         RedBoxVector(std::string file_name, size_t dim,
                      int     capacity   = default_capacity,
-                     uint8_t k          = DEFAULT_CLUSTERS,
+                     uint16_t k         = DEFAULT_CLUSTERS,
                      uint8_t num_probes = DEFAULT_PROBES);
 
         void     insert(uint64_t id, const std::vector<float>& vec);

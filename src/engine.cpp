@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <filesystem>
 #include "redboxdb/engine.hpp"
 #include "redboxdb/storage_manager.hpp"
@@ -16,7 +16,7 @@
 
 namespace CoreEngine {
 
-    RedBoxVector::RedBoxVector(std::string file_name, size_t dim, int capacity, uint8_t k, uint8_t num_probes) : dimension(dim), file_name(file_name), tombstone_file(file_name + ".del")
+    RedBoxVector::RedBoxVector(std::string file_name, size_t dim, int capacity, uint16_t k, uint8_t num_probes) : dimension(dim), file_name(file_name), tombstone_file(file_name + ".del")
     {
         _manager = std::make_unique<StorageManager::Manager>(file_name, dim, capacity, k, num_probes);
         load_tombstones();
@@ -24,7 +24,6 @@ namespace CoreEngine {
         use_avx2    = Platform::has_avx2();
         num_threads = std::max(1u, std::thread::hardware_concurrency());
 
-        // Build ID->index, deleted_flags, and cluster_index from existing file contents
         int existing = static_cast<int>(_manager->get_count());
         deleted_flags.resize(existing, 0);
         cluster_index.resize(k);
@@ -35,7 +34,6 @@ namespace CoreEngine {
                 deleted_flags[i] = 1;
             } else {
                 id_to_index[id] = i;
-                // Rebuild in-memory cluster index from mmap cluster_block
                 if (_manager->is_cluster_initialized()) {
                     uint16_t c = _manager->get_cluster(i);
                     if (c < k) cluster_index[c].push_back(i);
@@ -57,16 +55,11 @@ namespace CoreEngine {
 
     // -----------------------------------------------------------------------
     void RedBoxVector::insert(uint64_t id, const std::vector<float>& vec) {
-        // --- Issue #17: Zombie-row fix ---
-        // If this ID was previously deleted, check whether we can reuse its old
-        // mmap slot instead of appending a brand-new one.
-        // Without this, every delete-then-reinsert cycle leaks a slot that is
-        // forever flagged deleted but never reclaimed (a "zombie row").
+        std::unique_lock<std::shared_mutex> lk(rw_mutex);
+
         if (deleted_ids.count(id)) {
             deleted_ids.erase(id);
 
-            // Find the old slot via a reverse scan of id_block.
-            // (id_to_index was erased on delete, so we must walk the mmap.)
             int old_slot = -1;
             int total = static_cast<int>(_manager->get_count());
             for (int i = 0; i < total; ++i) {
@@ -77,12 +70,10 @@ namespace CoreEngine {
             }
 
             if (old_slot != -1) {
-                // Overwrite the zombie slot in-place — no new slot consumed.
                 float* dst = _manager->get_float_ptr_mut(old_slot);
                 std::memcpy(dst, vec.data(), dimension * sizeof(float));
 
-                // Re-assign cluster
-                uint8_t  k = _manager->get_num_clusters();
+                uint16_t k = _manager->get_num_clusters();
                 uint16_t c = 0;
                 if (_manager->is_cluster_initialized()) {
                     c = ClusterManager::find_nearest_centroid(
@@ -96,28 +87,23 @@ namespace CoreEngine {
                 }
                 _manager->set_cluster(old_slot, c);
 
-                // Resurrect the slot
                 deleted_flags[old_slot] = 0;
                 id_to_index[id] = old_slot;
                 return;
             }
-            // If the old slot wasn't found for some reason, fall through to a
-            // normal append (shouldn't happen in practice, but be safe).
         }
 
         try {
-            uint8_t  k    = _manager->get_num_clusters();
+            uint16_t k    = _manager->get_num_clusters();
             size_t   slot = _manager->get_count();
             deleted_flags.push_back(0);
             uint16_t c    = 0;
 
             if (!_manager->is_cluster_initialized()) {
-                // Pre-initialization: assign to cluster 0
                 c = 0;
                 _manager->add_vector(id, vec, c);
 
                 if ((uint64_t)(slot + 1) >= KMEANS_INIT_THRESHOLD) {
-                    // Hit K vectors — run K-Means++ and assign all slots
                     ClusterManager::kmeans_plus_plus_init(
                         _manager->get_centroid_block(),
                         _manager->get_cluster_count_block(),
@@ -126,7 +112,6 @@ namespace CoreEngine {
                         k, slot+1, dimension, use_avx2);
                     _manager->set_cluster_initialized();
 
-                    // Rebuild cluster_index from scratch now that assignments are real
                     for (auto& v : cluster_index) v.clear();
                     for (int i = 0; i <= (int)slot; ++i) {
                         if (!deleted_flags[i]) {
@@ -138,7 +123,6 @@ namespace CoreEngine {
                     Log::info("K-Means++ initialized with K=" + std::to_string((int)k));
                 }
             } else {
-                // Normal path: find nearest centroid, assign, update centroid online
                 c = ClusterManager::find_nearest_centroid(
                     vec.data(),
                     _manager->get_centroid_block(),
@@ -149,7 +133,6 @@ namespace CoreEngine {
                     _manager->get_cluster_count_block(),
                     c, vec.data(), dimension);
 
-                // Update in-memory inverted index
                 cluster_index[c].push_back(static_cast<int>(slot));
             }
 
@@ -161,7 +144,14 @@ namespace CoreEngine {
     }
 
     uint64_t RedBoxVector::insert_auto(const std::vector<float>& vec) {
-        uint64_t new_id = _manager->next_id();
+        // next_id() mutates header->next_id. insert() acquires the write lock too.
+        // To avoid a deadlock we get the id under a brief lock, then call insert()
+        // which will acquire the lock itself.
+        uint64_t new_id;
+        {
+            std::unique_lock<std::shared_mutex> lk(rw_mutex);
+            new_id = _manager->next_id();
+        }
         insert(new_id, vec);
         return new_id;
     }
@@ -178,23 +168,19 @@ namespace CoreEngine {
     // -----------------------------------------------------------------------
     int RedBoxVector::search(const std::vector<float>& query) {
         int count = static_cast<int>(_manager->get_count());
-        if (count == 0) return -1;   // Issue #19: -1 = not found / empty DB
+        if (count == 0) return -1;
 
-        uint8_t k           = _manager->get_num_clusters();
-        uint8_t num_probes  = _manager->get_num_probes();
-        bool    initialized = _manager->is_cluster_initialized();
+        uint16_t k         = _manager->get_num_clusters();
+        uint8_t num_probes = _manager->get_num_probes();
+        bool initialized   = _manager->is_cluster_initialized();
+        const float* float_block_snap = _manager->get_float_ptr(0);
 
-        // --- Build candidate list ---
-        // If initialized: O(K) centroid scan + O(cluster_size) lookup via cluster_index
-        // If not: full slot list (pre-init fallback)
         std::vector<int> candidates;
 
         if (initialized) {
             const float* centroid_block = _manager->get_centroid_block();
-
-            // Score all K centroids, pick nearest num_probes
             std::vector<std::pair<float, uint16_t>> centroid_dists(k);
-            for (uint8_t c = 0; c < k; ++c) {
+            for (uint16_t c = 0; c < k; ++c) {
                 float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
                                        dimension, use_avx2);
                 centroid_dists[c] = { d, c };
@@ -203,7 +189,6 @@ namespace CoreEngine {
                               centroid_dists.begin() + num_probes,
                               centroid_dists.end());
 
-            // Collect candidates directly from inverted index — no full scan
             size_t reserve_size = 0;
             for (int p = 0; p < num_probes; ++p)
                 reserve_size += cluster_index[centroid_dists[p].second].size();
@@ -220,15 +205,14 @@ namespace CoreEngine {
                 if (!deleted_flags[i]) candidates.push_back(i);
         }
 
-        if (candidates.empty()) return -1;  // All slots deleted
+        if (candidates.empty()) return -1;
 
-        // --- Distance scan over candidates only ---
         float min_dist  = 1e9f;
         int   best_slot = -1;
-        for (int i : candidates) {
-            const float* vec_ptr = _manager->get_float_ptr(i);
+        for (int slot : candidates) {
+            const float* vec_ptr = float_block_snap + (size_t)slot * dimension;
             float dist = Distance::l2(vec_ptr, query.data(), dimension, use_avx2);
-            if (dist < min_dist) { min_dist = dist; best_slot = i; }
+            if (dist < min_dist) { min_dist = dist; best_slot = slot; }
         }
 
         if (best_slot == -1) return -1;
@@ -238,21 +222,21 @@ namespace CoreEngine {
     // -----------------------------------------------------------------------
     std::vector<int> RedBoxVector::search_N(const std::vector<float>& query, int N) {
         using PQ = std::priority_queue<std::pair<float, int>>;
+
         int count = static_cast<int>(_manager->get_count());
         if (count == 0) return {};
 
-        uint8_t k           = _manager->get_num_clusters();
-        uint8_t num_probes  = _manager->get_num_probes();
-        bool    initialized = _manager->is_cluster_initialized();
+        uint16_t k         = _manager->get_num_clusters();
+        uint8_t num_probes = _manager->get_num_probes();
+        bool initialized   = _manager->is_cluster_initialized();
+        const float* float_block_snap = _manager->get_float_ptr(0);
 
-        // --- Build candidate list ---
         std::vector<int> candidates;
 
         if (initialized) {
             const float* centroid_block = _manager->get_centroid_block();
-
             std::vector<std::pair<float, uint16_t>> centroid_dists(k);
-            for (uint8_t c = 0; c < k; ++c) {
+            for (uint16_t c = 0; c < k; ++c) {
                 float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
                                        dimension, use_avx2);
                 centroid_dists[c] = { d, c };
@@ -279,13 +263,12 @@ namespace CoreEngine {
 
         if (candidates.empty()) return {};
 
-        // --- Distance scan over candidates only ---
         PQ pq;
-        for (int i : candidates) {
-            const float* vec_ptr = _manager->get_float_ptr(i);
+        for (int slot : candidates) {
+            const float* vec_ptr = float_block_snap + (size_t)slot * dimension;
             float dist = Distance::l2(vec_ptr, query.data(), dimension, use_avx2);
-            if ((int)pq.size() < N)                    pq.push({ dist, i });
-            else if (dist < pq.top().first) { pq.pop(); pq.push({ dist, i }); }
+            if ((int)pq.size() < N)                    pq.push({ dist, slot });
+            else if (dist < pq.top().first) { pq.pop(); pq.push({ dist, slot }); }
         }
 
         std::vector<int> result;
@@ -347,15 +330,14 @@ namespace CoreEngine {
 
     // -----------------------------------------------------------------------
     bool RedBoxVector::remove(uint64_t id) {
+        std::unique_lock<std::shared_mutex> lk(rw_mutex);
+
         if (deleted_ids.count(id)) return false;
 
-        // ID was never inserted — don't write a ghost tombstone
         auto it = id_to_index.find(id);
         if (it == id_to_index.end()) return false;
 
         deleted_flags[it->second] = 1;
-        // Note: we don't remove from cluster_index — deleted_flags check handles it.
-        // cluster_index entries for deleted slots are simply skipped during search.
         id_to_index.erase(it);
 
         deleted_ids.insert(id);
@@ -370,10 +352,13 @@ namespace CoreEngine {
 
     // -----------------------------------------------------------------------
     uint32_t RedBoxVector::get_dim() const {
+        std::shared_lock<std::shared_mutex> lk(rw_mutex);
         return static_cast<uint32_t>(dimension);
     }
 
     bool RedBoxVector::update(uint64_t id, const std::vector<float>& vec) {
+        std::unique_lock<std::shared_mutex> lk(rw_mutex);
+
         if (deleted_ids.count(id)) return false;
 
         auto it = id_to_index.find(id);
@@ -388,14 +373,14 @@ namespace CoreEngine {
 
 
 // ============================================================
-// StorageManager — Clustered columnar layout (version 2)
+// StorageManager
 // ============================================================
 namespace StorageManager {
 
     static void setup_pointers(
         void*     map_base,
         uint64_t  capacity,
-        uint8_t   k,
+        uint16_t  k,
         uint64_t  dim,
         CoreEngine::SpecificMetadata*& header,
         float*&    centroid_block,
@@ -413,7 +398,7 @@ namespace StorageManager {
     }
 
     Manager::Manager(const std::string& db_file, uint64_t dimensions,
-                     int initial_capacity, uint8_t num_clusters, uint8_t num_probes)
+                     int initial_capacity, uint16_t num_clusters, uint8_t num_probes)
         : allocated_size(initial_capacity), filename(db_file),
           hFile(NULL), hMapFile(NULL), map_base(nullptr),
           header(nullptr), centroid_block(nullptr), cluster_count_block(nullptr),

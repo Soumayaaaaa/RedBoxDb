@@ -33,7 +33,7 @@ namespace StorageManager {
         float*    float_block;
 
     public:
-        Manager(const std::string& db_file, uint64_t dimensions, int initial_capacity, uint8_t num_clusters = 100, uint8_t num_probes = 1);
+        Manager(const std::string& db_file, uint64_t dimensions, int initial_capacity, uint16_t num_clusters = 100, uint8_t num_probes = 1);
         ~Manager();
 
         void             add_vector(uint64_t id, const std::vector<float>& vec, uint16_t cluster);
@@ -51,7 +51,7 @@ namespace StorageManager {
 
         bool    is_cluster_initialized() const  { return header->is_initialized != 0; }
         void    set_cluster_initialized()       { header->is_initialized = 1; }
-        uint8_t get_num_clusters() const        { return header->num_clusters; }
+        uint16_t get_num_clusters() const        { return header->num_clusters; }
         uint8_t get_num_probes()   const        { return header->num_probes; }
     };
 }
