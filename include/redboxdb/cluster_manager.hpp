@@ -14,13 +14,13 @@ namespace ClusterManager {
     inline uint16_t find_nearest_centroid(
         const float* vec,
         const float* centroid_block,  // K x dim, row-major
-        uint8_t      k,
+        uint16_t     k,
         size_t       dim,
         bool         use_avx2)
     {
         float    best_dist = std::numeric_limits<float>::max();
         uint16_t best_c    = 0;
-        for (uint8_t c = 0; c < k; ++c) {
+        for (uint16_t c = 0; c < k; ++c) {
             const float* centroid = centroid_block + (size_t)c * dim;
             float dist = Distance::l2(vec, centroid, dim, use_avx2);
             if (dist < best_dist) { best_dist = dist; best_c = c; }
@@ -55,7 +55,7 @@ namespace ClusterManager {
         uint64_t*     cluster_count_block,
         uint16_t*     cluster_block,
         const float*  float_block,
-        uint8_t       k,
+        uint16_t      k,
         size_t        n,           // number of vectors to init from (>= k)
         size_t        dim,
         bool          use_avx2)
@@ -63,7 +63,7 @@ namespace ClusterManager {
         std::mt19937 rng(42);
 
         // Reset counts: we will recount from scratch during assignment
-        for (uint8_t c = 0; c < k; ++c) cluster_count_block[c] = 0;
+        for (uint16_t c = 0; c < k; ++c) cluster_count_block[c] = 0;
 
         // Step 1: pick first centroid randomly from the n vectors
         std::uniform_int_distribution<size_t> uniform(0, n - 1);
@@ -75,7 +75,7 @@ namespace ClusterManager {
         // Step 2: pick remaining k-1 centroids with D^2 weighting
         std::vector<float> min_dists(n, std::numeric_limits<float>::max());
 
-        for (uint8_t chosen = 1; chosen < k; ++chosen) {
+        for (uint16_t chosen = 1; chosen < k; ++chosen) {
             // Update min distances from each point to nearest chosen centroid
             const float* last_centroid = centroid_block + (size_t)(chosen - 1) * dim;
             for (size_t i = 0; i < n; ++i) {
@@ -122,7 +122,7 @@ namespace ClusterManager {
         }
 
         // Recompute centroids as true means of assigned vectors
-        for (uint8_t c = 0; c < k; ++c) {
+        for (uint16_t c = 0; c < k; ++c) {
             if (cluster_count_block[c] == 0) continue;
             float* centroid = centroid_block + (size_t)c * dim;
             double inv = 1.0 / (double)cluster_count_block[c];
