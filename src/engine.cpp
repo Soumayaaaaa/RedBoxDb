@@ -108,6 +108,7 @@ namespace CoreEngine {
         try {
             uint8_t  k    = _manager->get_num_clusters();
             size_t   slot = _manager->get_count();
+            deleted_flags.push_back(0);
             uint16_t c    = 0;
 
             if (!_manager->is_cluster_initialized()) {
@@ -153,7 +154,6 @@ namespace CoreEngine {
             }
 
             id_to_index[id] = slot;
-            deleted_flags.push_back(0);
         }
         catch (const std::exception& e) {
             Log::error("Insert failed: " + std::string(e.what()));
@@ -419,7 +419,7 @@ namespace StorageManager {
           header(nullptr), centroid_block(nullptr), cluster_count_block(nullptr),
           cluster_block(nullptr), id_block(nullptr), float_block(nullptr)
     {
-        hFile = CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+        hFile = CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (hFile == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not open file");
 

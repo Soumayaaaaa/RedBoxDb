@@ -6,3 +6,7 @@ add_executable(InsertMicro insert_micro.cpp)
 target_link_libraries(InsertMicro PRIVATE RedBoxDbLib)
 target_compile_options(InsertMicro PRIVATE -mavx2 -mfma)
 set_project_warnings(InsertMicro)
+
+add_executable(QpsBench qps_bench.cpp)
+target_link_libraries(QpsBench PRIVATE RedBoxDbLib)
+set_project_warnings(QpsBench)
