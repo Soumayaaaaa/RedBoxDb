@@ -13,7 +13,7 @@ target_include_directories(RedBoxDbLib
         ${PROJECT_SOURCE_DIR}/include
 )
 
-target_link_libraries(RedBoxDbLib PRIVATE spdlog::spdlog)
+target_link_libraries(RedBoxDbLib PRIVATE spdlog::spdlog Threads::Threads)
 
 if(MSVC)
     target_compile_options(RedBoxDbLib PRIVATE /arch:AVX2)
@@ -49,6 +49,7 @@ target_link_libraries(RedBoxServer
     PRIVATE
         RedBoxDbLib
         spdlog::spdlog
+        Threads::Threads
 )
 
 # Only link Winsock on Windows
