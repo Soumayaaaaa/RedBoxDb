@@ -4,8 +4,16 @@
 #include <vector>
 #include <stdexcept>
 #include <iostream>
-#include <windows.h>
 #include <redboxdb/SpecificMetadata.hpp>
+
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <sys/mman.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
 
 namespace StorageManager {
 
@@ -13,8 +21,12 @@ namespace StorageManager {
     private:
         size_t      allocated_size;
         std::string filename;
+#ifdef _WIN32
         HANDLE      hFile;
         HANDLE      hMapFile;
+#else
+        int         fd;
+#endif
         void*       map_base;
 
         CoreEngine::SpecificMetadata* header;
@@ -73,7 +85,7 @@ namespace StorageManager {
       float_block + i * dimensions -> pointer to float data
 */
 /*
-    I am on windows! Forgive me.
+    Cross-platform: Win32 (CreateFileMapping/MapViewOfFile) and POSIX (mmap).
 */
 
 

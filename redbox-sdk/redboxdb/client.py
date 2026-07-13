@@ -56,30 +56,35 @@ class RedBoxClient:
 
     def _start_server(self):
         """Finds the bundled executable and launches it."""
-        # Locate RedBoxServer.exe relative to this script
+        # Locate server binary relative to this script
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        exe_path = os.path.join(base_dir, "RedBoxServer.exe")
+        if os.name == 'nt':
+            exe_name = "RedBoxServer.exe"
+        else:
+            exe_name = "RedBoxServer"
+        exe_path = os.path.join(base_dir, exe_name)
 
         if not os.path.exists(exe_path):
             # Fallback: maybe we are running from source/root, not installed package
-            exe_path = "RedBoxServer.exe" 
+            exe_path = exe_name
             if not os.path.exists(exe_path):
                 raise FileNotFoundError(
-                    f"CRITICAL: RedBoxServer.exe not found at {exe_path}. "
-                    "Please download the server or reinstall the package."
+                    f"CRITICAL: {exe_name} not found at {exe_path}. "
+                    "Please build the server or reinstall the package."
                 )
 
         # Launch process without creating a visible console window (Windows only)
-        creation_flags = 0
+        popen_kwargs = dict(
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
         if os.name == 'nt':
-            creation_flags = 0x08000000  # CREATE_NO_WINDOW
+            popen_kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
 
         try:
             self.server_process = subprocess.Popen(
                 [exe_path],
-                creationflags=creation_flags,
-                stdout=subprocess.DEVNULL,  # Suppress logs for cleaner output
-                stderr=subprocess.DEVNULL
+                **popen_kwargs
             )
             
             # Ensure cleanup on exit

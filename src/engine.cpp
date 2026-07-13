@@ -432,18 +432,15 @@ namespace StorageManager {
     Manager::Manager(const std::string& db_file, uint64_t dimensions,
                      int initial_capacity, uint16_t num_clusters, uint8_t num_probes)
         : allocated_size(initial_capacity), filename(db_file),
-          hFile(NULL), hMapFile(NULL), map_base(nullptr),
+#ifdef _WIN32
+          hFile(NULL), hMapFile(NULL),
+#else
+          fd(-1),
+#endif
+          map_base(nullptr),
           header(nullptr), centroid_block(nullptr), cluster_count_block(nullptr),
           cluster_block(nullptr), id_block(nullptr), float_block(nullptr)
     {
-        hFile = CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (hFile == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not open file");
-
-        LARGE_INTEGER fileSize;
-        GetFileSizeEx(hFile, &fileSize);
-        size_t current_size = (size_t)fileSize.QuadPart;
-
         size_t centroid_bytes      = (size_t)num_clusters * dimensions * sizeof(float);
         size_t cluster_count_bytes = (size_t)num_clusters * sizeof(uint64_t);
         size_t cluster_block_bytes = (size_t)initial_capacity * sizeof(uint16_t);
@@ -452,6 +449,17 @@ namespace StorageManager {
         size_t required_size       = sizeof(CoreEngine::SpecificMetadata)
                                    + centroid_bytes + cluster_count_bytes
                                    + cluster_block_bytes + id_block_bytes + float_block_bytes;
+
+        size_t current_size = 0;
+
+#ifdef _WIN32
+        hFile = CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not open file");
+
+        LARGE_INTEGER fileSize;
+        GetFileSizeEx(hFile, &fileSize);
+        current_size = (size_t)fileSize.QuadPart;
 
         if (current_size == 0) {
             LARGE_INTEGER distance;
@@ -466,6 +474,21 @@ namespace StorageManager {
         if (!hMapFile) throw std::runtime_error("CreateFileMapping failed");
         map_base = MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, 0);
         if (!map_base) throw std::runtime_error("MapViewOfFile failed");
+#else
+        fd = open(filename.c_str(), O_RDWR | O_CREAT, 0644);
+        if (fd < 0) throw std::runtime_error("Could not open file: " + filename);
+
+        struct stat st;
+        if (fstat(fd, &st) < 0) { close(fd); throw std::runtime_error("fstat failed"); }
+        current_size = (size_t)st.st_size;
+
+        if (current_size == 0) {
+            if (ftruncate(fd, (off_t)required_size) < 0) { close(fd); throw std::runtime_error("ftruncate failed"); }
+        }
+
+        map_base = mmap(nullptr, required_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (map_base == MAP_FAILED) { close(fd); throw std::runtime_error("mmap failed"); }
+#endif
 
         setup_pointers(map_base, (uint64_t)initial_capacity, num_clusters, dimensions,
                        header, centroid_block, cluster_count_block,
@@ -484,14 +507,22 @@ namespace StorageManager {
         }
         else {
             if (header->version != CoreEngine::SpecificMetadata::CURRENT_VERSION) {
+#ifdef _WIN32
                 UnmapViewOfFile(map_base); CloseHandle(hMapFile); CloseHandle(hFile);
+#else
+                munmap(map_base, required_size); close(fd);
+#endif
                 throw std::runtime_error(
                     "Legacy database layout detected (version " +
                     std::to_string(header->version) +
                     "). Please recreate the database.");
             }
             if (header->dimensions != dimensions) {
+#ifdef _WIN32
                 UnmapViewOfFile(map_base); CloseHandle(hMapFile); CloseHandle(hFile);
+#else
+                munmap(map_base, required_size); close(fd);
+#endif
                 throw std::runtime_error("DB dimension mismatch! File has " +
                     std::to_string(header->dimensions));
             }
@@ -501,9 +532,17 @@ namespace StorageManager {
     uint64_t Manager::next_id() { return header->next_id++; }
 
     Manager::~Manager() {
+#ifdef _WIN32
         if (map_base) { FlushViewOfFile(map_base, 0); UnmapViewOfFile(map_base); }
         if (hMapFile)  CloseHandle(hMapFile);
         if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+#else
+        if (map_base && map_base != MAP_FAILED) {
+            msync(map_base, allocated_size, MS_SYNC);
+            munmap(map_base, allocated_size);
+        }
+        if (fd >= 0) close(fd);
+#endif
     }
 
     void Manager::add_vector(uint64_t id, const std::vector<float>& vec, uint16_t cluster) {

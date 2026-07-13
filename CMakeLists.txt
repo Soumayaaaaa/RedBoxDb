@@ -14,6 +14,8 @@ include(cmake/StandardProjectSettings.cmake)
 include(GNUInstallDirs)
 include(FetchContent)
 
+find_package(Threads REQUIRED)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
