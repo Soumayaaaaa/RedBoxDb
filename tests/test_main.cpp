@@ -737,7 +737,7 @@ TEST_F(SearchNotFoundTest, SearchNEmptyDbReturnsEmptyVec) {
 #include <set>
 #include <unordered_set>
 #include <chrono>
-#include <windows.h>  // Sleep() for retry loop
+#include <thread>
 
 // ---------------------------------------------------------------------------
 // Shared fixture helper — inherit from this instead of repeating boilerplate
@@ -771,7 +771,7 @@ struct DbFixture : public ::testing::Test {
             if (!std::filesystem::exists(path)) return;
             std::error_code ec;
             if (std::filesystem::remove(path, ec)) return;
-            Sleep(10);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 

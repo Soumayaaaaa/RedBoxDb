@@ -1,18 +1,25 @@
 #pragma once
-#include <intrin.h>
 
-// One might ask, but Bibidh why AVX2? why not AVX-512?
-// I might answer
-// I am poor and my ryzen 5 5500U doesn't support AVX-512, but it does in fact support AVX2.
-
+#ifdef _MSC_VER
+    #include <intrin.h>
+#else
+    #include <cpuid.h>
+#endif
 
 namespace Platform {
     inline bool has_avx2() {
+#ifdef _MSC_VER
         int info[4] = { 0, 0, 0, 0 };
-        __cpuid(info, 0);           // First ask: what's the max input level?
-        if (info[0] < 7) return false; // If CPU doesn't support level 7, no AVX2
-
-        __cpuidex(info, 7, 0);      // Now ask level 7 � extended features
-        return (info[1] & (1 << 5)) != 0; // Bit 5 of EBX = AVX2
+        __cpuid(info, 0);
+        if (info[0] < 7) return false;
+        __cpuidex(info, 7, 0);
+        return (info[1] & (1 << 5)) != 0;
+#else
+        unsigned int info[4] = { 0, 0, 0, 0 };
+        if (!__get_cpuid(0, &info[0], &info[1], &info[2], &info[3])) return false;
+        if (info[0] < 7) return false;
+        __cpuid_count(7, 0, info[0], info[1], info[2], info[3]);
+        return (info[1] & (1 << 5)) != 0;
+#endif
     }
 }

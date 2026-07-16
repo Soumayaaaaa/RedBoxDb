@@ -1,8 +1,8 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <cstring>
+#include <cerrno>
 #include <unordered_map>
 #include <memory>
 #include <thread>
@@ -10,8 +10,19 @@
 #include "redboxdb/engine.hpp"
 #include <filesystem>
 
-#ifdef _MSC_VER
-#pragma comment(lib, "Ws2_32.lib")
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "Ws2_32.lib")
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <signal.h>
+    #define SOCKET int
+    #define INVALID_SOCKET (-1)
+    #define closesocket close
 #endif
 
 const int PORT = 8080;
@@ -25,6 +36,7 @@ const uint8_t CMD_UPDATE = 5;
 const uint8_t CMD_INSERT_AUTO = 6;
 const uint8_t CMD_SEARCH_N = 7;
 const uint8_t CMD_DROP_DB  = 8;
+const uint8_t CMD_SET_PROBES = 9;
 
 
 using DbCatalog = std::unordered_map<std::string, std::unique_ptr<CoreEngine::RedBoxVector>>;
@@ -55,7 +67,20 @@ void handle_client(SOCKET client_socket, SharedState& state) {
             total += n;
         }
         return true;
-        };
+    };
+
+    auto send_all = [&](const char* buf, int len) -> bool {
+        int total = 0;
+        while (total < len) {
+            int n = send(client_socket, buf + total, len - total, 0);
+            if (n <= 0) {
+                if (n < 0 && errno == EINTR) continue;
+                return false;
+            }
+            total += n;
+        }
+        return true;
+    };
 
     while (true) {
         if (!recv_all(header_buffer, 5)) break;
@@ -103,7 +128,7 @@ void handle_client(SOCKET client_socket, SharedState& state) {
                     << active_db->get_dim() << "\n";
             }
 
-            send(client_socket, "1", 1, 0);
+            if (!send_all("1", 1)) break;
             continue;
         }
 
@@ -116,20 +141,20 @@ void handle_client(SOCKET client_socket, SharedState& state) {
             std::vector<float> vec(current_dim);
             if (!recv_all((char*)vec.data(), vec_byte_size)) break;
             { std::lock_guard<std::mutex> lk(*active_mtx); active_db->insert(meta_data, vec); }
-            send(client_socket, "1", 1, 0);
+            if (!send_all("1", 1)) break;
         }
         else if (cmd == CMD_SEARCH) {
             std::vector<float> query(current_dim);
             if (!recv_all((char*)query.data(), vec_byte_size)) break;
             int result_id;
             { std::lock_guard<std::mutex> lk(*active_mtx); result_id = active_db->search(query); }
-            send(client_socket, (char*)&result_id, 4, 0);
+            if (!send_all((char*)&result_id, 4)) break;
         }
         else if (cmd == CMD_DELETE) {
             bool success;
             { std::lock_guard<std::mutex> lk(*active_mtx); success = active_db->remove(meta_data); }
             char resp = success ? '1' : '0';
-            send(client_socket, &resp, 1, 0);
+            if (!send_all(&resp, 1)) break;
         }
         else if (cmd == CMD_UPDATE) {
             std::vector<float> vec(current_dim);
@@ -137,14 +162,14 @@ void handle_client(SOCKET client_socket, SharedState& state) {
             bool success;
             { std::lock_guard<std::mutex> lk(*active_mtx); success = active_db->update(meta_data, vec); }
             char resp = success ? '1' : '0';
-            send(client_socket, &resp, 1, 0);
+            if (!send_all(&resp, 1)) break;
         }
         else if (cmd == CMD_INSERT_AUTO) {
             std::vector<float> vec(current_dim);
             if (!recv_all((char*)vec.data(), vec_byte_size)) break;
             uint64_t assigned_id;
             { std::lock_guard<std::mutex> lk(*active_mtx); assigned_id = active_db->insert_auto(vec); }
-            send(client_socket, (char*)&assigned_id, sizeof(assigned_id), 0);
+            if (!send_all((char*)&assigned_id, sizeof(assigned_id))) break;
         }
         else if (cmd == CMD_SEARCH_N) {
             int n = static_cast<int>(meta_data);
@@ -153,14 +178,14 @@ void handle_client(SOCKET client_socket, SharedState& state) {
             if (n <= 0) {
                 // Bad input — send zero results, don't crash
                 uint32_t count = 0;
-                send(client_socket, (char*)&count, sizeof(count), 0);
+                if (!send_all((char*)&count, sizeof(count))) break;
             } else {
                 std::vector<int> results;
                 { std::lock_guard<std::mutex> lk(*active_mtx); results = active_db->search_N(query, n); }
                 uint32_t count = static_cast<uint32_t>(results.size());
-                send(client_socket, (char*)&count, sizeof(count), 0);
+                if (!send_all((char*)&count, sizeof(count))) break;
                 if (count > 0)
-                    send(client_socket, (char*)results.data(), count * sizeof(int), 0);
+                    if (!send_all((char*)results.data(), count * sizeof(int))) break;
             }
         }
         else if (cmd == CMD_DROP_DB) {
@@ -190,7 +215,16 @@ void handle_client(SOCKET client_socket, SharedState& state) {
             }
 
             char resp = success ? '1' : '0';
-            send(client_socket, &resp, 1, 0);
+            if (!send_all(&resp, 1)) break;
+        }
+        else if (cmd == CMD_SET_PROBES) {
+            uint8_t new_probes = static_cast<uint8_t>(meta_data);
+            if (active_db && new_probes > 0) {
+                active_db->set_num_probes(new_probes);
+                std::cout << "[SERVER] Set num_probes = " << (int)new_probes << "\n";
+            }
+            char resp = '1';
+            if (!send_all(&resp, 1)) break;
         }
     }
 
@@ -199,8 +233,12 @@ void handle_client(SOCKET client_socket, SharedState& state) {
 }
 
 int main() {
+#ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return 1;
+#else
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     SharedState state;
 
@@ -233,7 +271,9 @@ int main() {
     }
 
     closesocket(server_socket);
+#ifdef _WIN32
     WSACleanup();
+#endif
     return 0;
 }
 

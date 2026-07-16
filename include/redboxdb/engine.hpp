@@ -15,7 +15,7 @@ namespace CoreEngine {
         static constexpr size_t  TOMBSTONE_COMPACT_SLACK = 64;
         static constexpr int     PARALLEL_THRESHOLD    = 50000;
         static constexpr uint16_t  DEFAULT_CLUSTERS      = 1000;
-        static constexpr uint8_t DEFAULT_PROBES        = 1;
+        static constexpr uint8_t DEFAULT_PROBES        = 10;
         static constexpr uint64_t KMEANS_INIT_THRESHOLD = 10000;
 
         size_t dimension;
@@ -51,6 +51,7 @@ namespace CoreEngine {
         bool     remove(uint64_t id);
         uint32_t get_dim() const;
         bool     update(uint64_t id, const std::vector<float>& vec);
+        void     set_num_probes(uint8_t p);
 
         // Tombstone helpers
         void load_tombstones();

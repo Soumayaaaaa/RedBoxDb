@@ -19,6 +19,7 @@ class RedBoxClient:
     CMD_INSERT_AUTO = 6
     CMD_SEARCH_N    = 7
     CMD_DROP_DB     = 8
+    CMD_SET_PROBES  = 9
 
     def __init__(self, host: str = '127.0.0.1', port: int = 8080, db_name: str = 'default', dim: int = 128, capacity: int=100_000):
         self.host    = host
@@ -115,6 +116,12 @@ class RedBoxClient:
 
     def drop(self) -> bool:
         self.sock.sendall(struct.pack('<BI', self.CMD_DROP_DB, 0))
+        return self.sock.recv(1) == b'1'
+
+    def set_probes(self, probes: int) -> bool:
+        """Set the number of IVF clusters to probe during search (1-255)."""
+        header = struct.pack('<BI', self.CMD_SET_PROBES, probes)
+        self.sock.sendall(header)
         return self.sock.recv(1) == b'1'
 
     # ------------------------------------------------------------------

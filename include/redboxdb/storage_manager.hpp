@@ -4,8 +4,16 @@
 #include <vector>
 #include <stdexcept>
 #include <iostream>
-#include <windows.h>
 #include <redboxdb/SpecificMetadata.hpp>
+
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <sys/mman.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
 
 namespace StorageManager {
 
@@ -13,8 +21,12 @@ namespace StorageManager {
     private:
         size_t      allocated_size;
         std::string filename;
+#ifdef _WIN32
         HANDLE      hFile;
         HANDLE      hMapFile;
+#else
+        int         fd;
+#endif
         void*       map_base;
 
         CoreEngine::SpecificMetadata* header;
@@ -53,6 +65,7 @@ namespace StorageManager {
         void    set_cluster_initialized()       { header->is_initialized = 1; }
         uint16_t get_num_clusters() const        { return header->num_clusters; }
         uint8_t get_num_probes()   const        { return header->num_probes; }
+        void    set_num_probes(uint8_t p)       { header->num_probes = p; }
     };
 }
 
