@@ -412,7 +412,7 @@ namespace StorageManager {
     static void setup_pointers(
         void*     map_base,
         uint64_t  capacity,
-        uint8_t   k,
+        uint16_t  k,
         uint64_t  dim,
         CoreEngine::SpecificMetadata*& header,
         float*&    centroid_block,
