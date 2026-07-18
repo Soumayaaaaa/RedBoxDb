@@ -1,5 +1,6 @@
 add_executable(RedBoxDbTests
     test_main.cpp
+    test_hnsw.cpp
 )
 
 target_link_libraries(RedBoxDbTests

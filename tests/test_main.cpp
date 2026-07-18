@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include "redboxdb/engine.hpp" // Ensure this path is correct
+#include <spdlog/spdlog.h>
 
 // Test Fixture to handle file cleanup automatically
 class BasicPersistanceAndZC : public ::testing::Test {
@@ -512,6 +513,8 @@ TEST_F(ConcurrentAccessTest, ConcurrentInsertsDoNotCorruptCount) {
 // return garbage � the mutex in server.cpp serialises this correctly.
 TEST_F(ConcurrentAccessTest, ConcurrentReadsAndWritesDoNotCrash) {
     std::streambuf* old_cerr = std::cerr.rdbuf(nullptr);
+    auto old_log_level = spdlog::default_logger()->level();
+    spdlog::set_level(spdlog::level::off);
 
     const int INITIAL = 200;
     const int READERS = 6;
@@ -527,7 +530,7 @@ TEST_F(ConcurrentAccessTest, ConcurrentReadsAndWritesDoNotCrash) {
     std::atomic<bool> stop{ false };
     std::atomic<int>  errors{ 0 };
 
-    // Writer thread: keeps inserting new vectors
+    // Writer thread: keeps inserting new vectors until DB is full
     std::thread writer([&]() {
         int id = INITIAL + 1;
         while (!stop.load()) {
@@ -565,6 +568,7 @@ TEST_F(ConcurrentAccessTest, ConcurrentReadsAndWritesDoNotCrash) {
 
     EXPECT_EQ(errors.load(), 0)
         << "No errors should occur during concurrent reads and writes";
+    spdlog::set_level(old_log_level);
     std::cerr.rdbuf(old_cerr);
 }
 

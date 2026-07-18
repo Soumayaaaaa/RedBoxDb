@@ -94,7 +94,9 @@ namespace HnswManager {
 
         float entry_dist = Distance::l2(query, float_block + (size_t)entry_slot * dim, dim, use_avx2);
         candidates_pq.push({entry_dist, entry_slot});
-        results_pq.push({entry_dist, entry_slot});
+        if (!(deleted_flags && deleted_flags[entry_slot])) {
+            results_pq.push({entry_dist, entry_slot});
+        }
         visited_buf[entry_slot] = visit_gen;
 
         while (!candidates_pq.empty()) {

@@ -538,6 +538,7 @@ namespace StorageManager {
     {
         bool is_hnsw = (index_type == CoreEngine::IndexType::HNSW);
         size_t required_size = calc_required_size(dimensions, initial_capacity, num_clusters, index_type, hnsw_M);
+        size_t current_size = 0;
 
 #ifdef _WIN32
         hFile = CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
@@ -546,9 +547,9 @@ namespace StorageManager {
 
         LARGE_INTEGER fileSize;
         GetFileSizeEx(hFile, &fileSize);
-        size_t current_size = (size_t)fileSize.QuadPart;
+        current_size = (size_t)fileSize.QuadPart;
 
-        if (current_size == 0) {
+        if (current_size < required_size) {
             LARGE_INTEGER distance;
             distance.QuadPart = (LONGLONG)required_size;
             if (!SetFilePointerEx(hFile, distance, NULL, FILE_BEGIN))
@@ -568,18 +569,6 @@ namespace StorageManager {
         struct stat st;
         if (fstat(fd, &st) < 0) { close(fd); throw std::runtime_error("fstat failed"); }
         current_size = (size_t)st.st_size;
-
-        if (current_size == 0) {
-            if (ftruncate(fd, (off_t)required_size) < 0) { close(fd); throw std::runtime_error("ftruncate failed"); }
-        }
-
-        map_base = mmap(nullptr, required_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (map_base == MAP_FAILED) { close(fd); throw std::runtime_error("mmap failed"); }
-#endif
-
-        struct stat st;
-        if (fstat(fd, &st) < 0) { close(fd); throw std::runtime_error("fstat failed"); }
-        size_t current_size = (size_t)st.st_size;
 
         if (current_size < required_size) {
             if (ftruncate(fd, (off_t)required_size) < 0) { close(fd); throw std::runtime_error("ftruncate failed"); }
