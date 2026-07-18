@@ -142,6 +142,9 @@ namespace CoreEngine {
         // Fresh insert
         try {
             size_t slot = _manager->get_count();
+            if (slot >= _manager->get_header()->max_capacity) {
+                return;
+            }
             deleted_flags.push_back(0);
 
             if (!is_hnsw) {
