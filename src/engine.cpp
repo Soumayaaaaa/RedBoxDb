@@ -243,29 +243,46 @@ namespace CoreEngine {
         bool initialized   = _manager->is_cluster_initialized();
         const float* float_block_snap = _manager->get_float_ptr(0);
 
-        std::vector<int> candidates;
+        // Thread-local buffers: no heap alloc per query
+        thread_local std::vector<std::pair<float, uint16_t>> centroid_dists;
+        thread_local std::vector<int> candidates;
+        candidates.clear();
 
         if (initialized) {
             const float* centroid_block = _manager->get_centroid_block();
-            std::vector<std::pair<float, uint16_t>> centroid_dists(k);
-            for (uint16_t c = 0; c < k; ++c) {
-                float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
-                                       dimension, use_avx2);
-                centroid_dists[c] = { d, c };
-            }
-            std::partial_sort(centroid_dists.begin(),
-                              centroid_dists.begin() + num_probes,
-                              centroid_dists.end());
 
-            size_t reserve_size = 0;
-            for (int p = 0; p < num_probes; ++p)
-                reserve_size += cluster_index[centroid_dists[p].second].size();
-            candidates.reserve(reserve_size);
-
-            for (int p = 0; p < num_probes; ++p) {
-                uint16_t c = centroid_dists[p].second;
-                for (int slot : cluster_index[c])
+            if (num_probes == 1) {
+                // Fast path: single linear scan for minimum, no sort needed
+                float    best_d = std::numeric_limits<float>::max();
+                uint16_t best_c = 0;
+                for (uint16_t c = 0; c < k; ++c) {
+                    float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
+                                           dimension, use_avx2);
+                    if (d < best_d) { best_d = d; best_c = c; }
+                }
+                for (int slot : cluster_index[best_c])
                     if (!deleted_flags[slot]) candidates.push_back(slot);
+            } else {
+                centroid_dists.resize(k);
+                for (uint16_t c = 0; c < k; ++c) {
+                    float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
+                                           dimension, use_avx2);
+                    centroid_dists[c] = { d, c };
+                }
+                std::partial_sort(centroid_dists.begin(),
+                                  centroid_dists.begin() + num_probes,
+                                  centroid_dists.end());
+
+                size_t reserve_size = 0;
+                for (int p = 0; p < num_probes; ++p)
+                    reserve_size += cluster_index[centroid_dists[p].second].size();
+                candidates.reserve(reserve_size);
+
+                for (int p = 0; p < num_probes; ++p) {
+                    uint16_t c = centroid_dists[p].second;
+                    for (int slot : cluster_index[c])
+                        if (!deleted_flags[slot]) candidates.push_back(slot);
+                }
             }
         } else {
             candidates.reserve(count);
@@ -275,7 +292,7 @@ namespace CoreEngine {
 
         if (candidates.empty()) return -1;
 
-        float min_dist  = 1e9f;
+        float min_dist  = std::numeric_limits<float>::max();
         int   best_slot = -1;
         for (int slot : candidates) {
             const float* vec_ptr = float_block_snap + (size_t)slot * dimension;
@@ -316,29 +333,44 @@ namespace CoreEngine {
         bool initialized   = _manager->is_cluster_initialized();
         const float* float_block_snap = _manager->get_float_ptr(0);
 
-        std::vector<int> candidates;
+        thread_local std::vector<std::pair<float, uint16_t>> centroid_dists;
+        thread_local std::vector<int> candidates;
+        candidates.clear();
 
         if (initialized) {
             const float* centroid_block = _manager->get_centroid_block();
-            std::vector<std::pair<float, uint16_t>> centroid_dists(k);
-            for (uint16_t c = 0; c < k; ++c) {
-                float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
-                                       dimension, use_avx2);
-                centroid_dists[c] = { d, c };
-            }
-            std::partial_sort(centroid_dists.begin(),
-                              centroid_dists.begin() + num_probes,
-                              centroid_dists.end());
 
-            size_t reserve_size = 0;
-            for (int p = 0; p < num_probes; ++p)
-                reserve_size += cluster_index[centroid_dists[p].second].size();
-            candidates.reserve(reserve_size);
-
-            for (int p = 0; p < num_probes; ++p) {
-                uint16_t c = centroid_dists[p].second;
-                for (int slot : cluster_index[c])
+            if (num_probes == 1) {
+                float    best_d = std::numeric_limits<float>::max();
+                uint16_t best_c = 0;
+                for (uint16_t c = 0; c < k; ++c) {
+                    float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
+                                           dimension, use_avx2);
+                    if (d < best_d) { best_d = d; best_c = c; }
+                }
+                for (int slot : cluster_index[best_c])
                     if (!deleted_flags[slot]) candidates.push_back(slot);
+            } else {
+                centroid_dists.resize(k);
+                for (uint16_t c = 0; c < k; ++c) {
+                    float d = Distance::l2(query.data(), centroid_block + (size_t)c * dimension,
+                                           dimension, use_avx2);
+                    centroid_dists[c] = { d, c };
+                }
+                std::partial_sort(centroid_dists.begin(),
+                                  centroid_dists.begin() + num_probes,
+                                  centroid_dists.end());
+
+                size_t reserve_size = 0;
+                for (int p = 0; p < num_probes; ++p)
+                    reserve_size += cluster_index[centroid_dists[p].second].size();
+                candidates.reserve(reserve_size);
+
+                for (int p = 0; p < num_probes; ++p) {
+                    uint16_t c = centroid_dists[p].second;
+                    for (int slot : cluster_index[c])
+                        if (!deleted_flags[slot]) candidates.push_back(slot);
+                }
             }
         } else {
             candidates.reserve(count);
@@ -531,7 +563,19 @@ namespace StorageManager {
         if (!map_base) throw std::runtime_error("MapViewOfFile failed");
 #else
         fd = open(filename.c_str(), O_RDWR | O_CREAT, 0644);
-        if (fd < 0) throw std::runtime_error("Could not open file");
+        if (fd < 0) throw std::runtime_error("Could not open file: " + filename);
+
+        struct stat st;
+        if (fstat(fd, &st) < 0) { close(fd); throw std::runtime_error("fstat failed"); }
+        current_size = (size_t)st.st_size;
+
+        if (current_size == 0) {
+            if (ftruncate(fd, (off_t)required_size) < 0) { close(fd); throw std::runtime_error("ftruncate failed"); }
+        }
+
+        map_base = mmap(nullptr, required_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (map_base == MAP_FAILED) { close(fd); throw std::runtime_error("mmap failed"); }
+#endif
 
         struct stat st;
         if (fstat(fd, &st) < 0) { close(fd); throw std::runtime_error("fstat failed"); }

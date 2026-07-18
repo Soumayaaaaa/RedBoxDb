@@ -1,14 +1,22 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <cstring>
-#include <cerrno>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+#endif
 #include <unordered_map>
 #include <memory>
 #include <thread>
 #include <mutex>
 #include "redboxdb/engine.hpp"
 #include <filesystem>
+#include <cstring>
 
 #ifdef _WIN32
     #include <winsock2.h>
@@ -54,7 +62,11 @@ struct SharedState {
 // -----------------------------------------------------------------------
 // handle_client � runs on its own thread, owns the client socket lifetime
 // -----------------------------------------------------------------------
+#ifdef _WIN32
 void handle_client(SOCKET client_socket, SharedState& state) {
+#else
+void handle_client(int client_socket, SharedState& state) {
+#endif
     std::cout << "[SERVER] Client connected (thread " << std::this_thread::get_id() << ")\n";
 
     CoreEngine::RedBoxVector* active_db = nullptr;
@@ -276,7 +288,11 @@ void handle_client(SOCKET client_socket, SharedState& state) {
         }
     }
 
+#ifdef _WIN32
     closesocket(client_socket);
+#else
+    close(client_socket);
+#endif
     std::cout << "[SERVER] Client disconnected (thread " << std::this_thread::get_id() << ")\n";
 }
 
@@ -290,7 +306,11 @@ int main() {
 
     SharedState state;
 
+#ifdef _WIN32
     SOCKET server_socket = socket(AF_INET, SOCK_STREAM, 0);
+#else
+    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
+#endif
 
     // Allow port reuse so restart doesn't give "address already in use"
     int opt = 1;
@@ -302,14 +322,19 @@ int main() {
     server_addr.sin_port = htons(PORT);
 
     bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr));
-    listen(server_socket, SOMAXCONN); // was 1 � allow a real backlog
+    listen(server_socket, SOMAXCONN); // was 1 — allow a real backlog
 
     std::cout << "[SERVER] Multi-Tenant Manager Listening on Port " << PORT
         << " (multi-threaded)...\n";
 
     while (true) {
+#ifdef _WIN32
         SOCKET client_socket = accept(server_socket, nullptr, nullptr);
         if (client_socket == INVALID_SOCKET) continue;
+#else
+        int client_socket = accept(server_socket, nullptr, nullptr);
+        if (client_socket < 0) continue;
+#endif
 
         // Disable Nagle on the accepted socket to avoid ~40ms delayed-ACK latency
         int flag = 1;
@@ -322,6 +347,7 @@ int main() {
             }).detach();
     }
 
+#ifdef _WIN32
     closesocket(server_socket);
 #ifdef _WIN32
     WSACleanup();

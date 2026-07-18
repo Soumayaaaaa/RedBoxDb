@@ -107,7 +107,7 @@ namespace StorageManager {
       float_block + i * dimensions -> pointer to float data
 */
 /*
-    I am on windows! Forgive me.
+    Cross-platform: Win32 (CreateFileMapping/MapViewOfFile) and POSIX (mmap).
 */
 
 

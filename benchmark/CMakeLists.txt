@@ -4,7 +4,11 @@ set_project_warnings(RedBoxBenchmark)
 
 add_executable(InsertMicro insert_micro.cpp)
 target_link_libraries(InsertMicro PRIVATE RedBoxDbLib)
-target_compile_options(InsertMicro PRIVATE -mavx2 -mfma)
+if(MSVC)
+    target_compile_options(InsertMicro PRIVATE /arch:AVX2)
+else()
+    target_compile_options(InsertMicro PRIVATE -mavx2 -mfma)
+endif()
 set_project_warnings(InsertMicro)
 
 add_executable(QpsBench qps_bench.cpp)

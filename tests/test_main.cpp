@@ -531,9 +531,12 @@ TEST_F(ConcurrentAccessTest, ConcurrentReadsAndWritesDoNotCrash) {
     std::thread writer([&]() {
         int id = INITIAL + 1;
         while (!stop.load()) {
-            std::lock_guard<std::mutex> lk(db_mutex);
-            db.insert((uint64_t)id, { (float)id, 0.0f, 0.0f });
-            ++id;
+            {
+                std::lock_guard<std::mutex> lk(db_mutex);
+                db.insert((uint64_t)id, { (float)id, 0.0f, 0.0f });
+                ++id;
+            }
+            std::this_thread::yield();
         }
         });
 
