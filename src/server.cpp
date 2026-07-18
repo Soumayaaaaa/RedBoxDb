@@ -21,7 +21,9 @@
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
-    #pragma comment(lib, "Ws2_32.lib")
+    #ifdef _MSC_VER
+        #pragma comment(lib, "Ws2_32.lib")
+    #endif
 #else
     #include <sys/socket.h>
     #include <netinet/in.h>
@@ -347,7 +349,6 @@ int main() {
             }).detach();
     }
 
-#ifdef _WIN32
     closesocket(server_socket);
 #ifdef _WIN32
     WSACleanup();
