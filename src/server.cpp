@@ -18,8 +18,22 @@
 #include <filesystem>
 #include <cstring>
 
-#ifdef _MSC_VER
-#pragma comment(lib, "Ws2_32.lib")
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #ifdef _MSC_VER
+        #pragma comment(lib, "Ws2_32.lib")
+    #endif
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <signal.h>
+    #define SOCKET int
+    #define INVALID_SOCKET (-1)
+    #define closesocket close
 #endif
 
 const int PORT = 8080;
@@ -33,6 +47,9 @@ const uint8_t CMD_UPDATE = 5;
 const uint8_t CMD_INSERT_AUTO = 6;
 const uint8_t CMD_SEARCH_N = 7;
 const uint8_t CMD_DROP_DB  = 8;
+const uint8_t CMD_SET_PROBES = 9;
+const uint8_t CMD_CREATE_HNSW_DB = 10;
+const uint8_t CMD_SET_HNSW_EF = 11;
 
 
 using DbCatalog = std::unordered_map<std::string, std::unique_ptr<CoreEngine::RedBoxVector>>;
@@ -67,7 +84,20 @@ void handle_client(int client_socket, SharedState& state) {
             total += n;
         }
         return true;
-        };
+    };
+
+    auto send_all = [&](const char* buf, int len) -> bool {
+        int total = 0;
+        while (total < len) {
+            int n = send(client_socket, buf + total, len - total, 0);
+            if (n <= 0) {
+                if (n < 0 && errno == EINTR) continue;
+                return false;
+            }
+            total += n;
+        }
+        return true;
+    };
 
     while (true) {
         if (!recv_all(header_buffer, 5)) break;
@@ -115,11 +145,47 @@ void handle_client(int client_socket, SharedState& state) {
                     << active_db->get_dim() << "\n";
             }
 
-            send(client_socket, "1", 1, 0);
+            if (!send_all("1", 1)) break;
             continue;
         }
 
-        if (!active_db) break; // No DB selected � drop the client
+        // --- HANDSHAKE / CREATE HNSW DB ---
+        if (cmd == CMD_CREATE_HNSW_DB) {
+            uint32_t name_len = meta_data;
+            std::string db_name(name_len, ' ');
+            if (!recv_all(&db_name[0], (int)name_len)) break;
+
+            uint32_t requested_dim = 0;
+            if (!recv_all((char*)&requested_dim, 4)) break;
+            uint32_t requested_capacity = 0;
+            if (!recv_all((char*)&requested_capacity, 4)) break;
+            uint8_t hnsw_M = 16;
+            if (!recv_all((char*)&hnsw_M, 1)) break;
+            uint16_t hnsw_ef_construction = 200;
+            if (!recv_all((char*)&hnsw_ef_construction, 2)) break;
+
+            std::cout << "[SERVER] Create HNSW DB: " << db_name
+                << " (Dim=" << requested_dim << " M=" << (int)hnsw_M
+                << " ef_c=" << hnsw_ef_construction << ")\n";
+
+            {
+                std::lock_guard<std::mutex> lock(state.catalog_mutex);
+                if (state.catalog.find(db_name) == state.catalog.end()) {
+                    std::string filename = db_name + ".db";
+                    state.catalog[db_name] = std::make_unique<CoreEngine::RedBoxVector>(
+                        filename, requested_dim, (int)requested_capacity,
+                        hnsw_M, hnsw_ef_construction);
+                    state.db_mutexes[db_name] = std::make_unique<std::mutex>();
+                }
+                active_db = state.catalog[db_name].get();
+                active_mtx = state.db_mutexes[db_name].get();
+            }
+
+            if (!send_all("1", 1)) break;
+            continue;
+        }
+
+        if (!active_db) break;
 
         int current_dim = active_db->get_dim();
         int vec_byte_size = current_dim * sizeof(float);
@@ -128,20 +194,20 @@ void handle_client(int client_socket, SharedState& state) {
             std::vector<float> vec(current_dim);
             if (!recv_all((char*)vec.data(), vec_byte_size)) break;
             { std::lock_guard<std::mutex> lk(*active_mtx); active_db->insert(meta_data, vec); }
-            send(client_socket, "1", 1, 0);
+            if (!send_all("1", 1)) break;
         }
         else if (cmd == CMD_SEARCH) {
             std::vector<float> query(current_dim);
             if (!recv_all((char*)query.data(), vec_byte_size)) break;
             int result_id;
             { std::lock_guard<std::mutex> lk(*active_mtx); result_id = active_db->search(query); }
-            send(client_socket, (char*)&result_id, 4, 0);
+            if (!send_all((char*)&result_id, 4)) break;
         }
         else if (cmd == CMD_DELETE) {
             bool success;
             { std::lock_guard<std::mutex> lk(*active_mtx); success = active_db->remove(meta_data); }
             char resp = success ? '1' : '0';
-            send(client_socket, &resp, 1, 0);
+            if (!send_all(&resp, 1)) break;
         }
         else if (cmd == CMD_UPDATE) {
             std::vector<float> vec(current_dim);
@@ -149,14 +215,14 @@ void handle_client(int client_socket, SharedState& state) {
             bool success;
             { std::lock_guard<std::mutex> lk(*active_mtx); success = active_db->update(meta_data, vec); }
             char resp = success ? '1' : '0';
-            send(client_socket, &resp, 1, 0);
+            if (!send_all(&resp, 1)) break;
         }
         else if (cmd == CMD_INSERT_AUTO) {
             std::vector<float> vec(current_dim);
             if (!recv_all((char*)vec.data(), vec_byte_size)) break;
             uint64_t assigned_id;
             { std::lock_guard<std::mutex> lk(*active_mtx); assigned_id = active_db->insert_auto(vec); }
-            send(client_socket, (char*)&assigned_id, sizeof(assigned_id), 0);
+            if (!send_all((char*)&assigned_id, sizeof(assigned_id))) break;
         }
         else if (cmd == CMD_SEARCH_N) {
             int n = static_cast<int>(meta_data);
@@ -165,14 +231,14 @@ void handle_client(int client_socket, SharedState& state) {
             if (n <= 0) {
                 // Bad input — send zero results, don't crash
                 uint32_t count = 0;
-                send(client_socket, (char*)&count, sizeof(count), 0);
+                if (!send_all((char*)&count, sizeof(count))) break;
             } else {
                 std::vector<int> results;
                 { std::lock_guard<std::mutex> lk(*active_mtx); results = active_db->search_N(query, n); }
                 uint32_t count = static_cast<uint32_t>(results.size());
-                send(client_socket, (char*)&count, sizeof(count), 0);
+                if (!send_all((char*)&count, sizeof(count))) break;
                 if (count > 0)
-                    send(client_socket, (char*)results.data(), count * sizeof(int), 0);
+                    if (!send_all((char*)results.data(), count * sizeof(int))) break;
             }
         }
         else if (cmd == CMD_DROP_DB) {
@@ -202,7 +268,25 @@ void handle_client(int client_socket, SharedState& state) {
             }
 
             char resp = success ? '1' : '0';
-            send(client_socket, &resp, 1, 0);
+            if (!send_all(&resp, 1)) break;
+        }
+        else if (cmd == CMD_SET_PROBES) {
+            uint8_t new_probes = static_cast<uint8_t>(meta_data);
+            if (active_db && new_probes > 0) {
+                active_db->set_num_probes(new_probes);
+                std::cout << "[SERVER] Set num_probes = " << (int)new_probes << "\n";
+            }
+            char resp = '1';
+            if (!send_all(&resp, 1)) break;
+        }
+        else if (cmd == CMD_SET_HNSW_EF) {
+            uint16_t new_ef = static_cast<uint16_t>(meta_data);
+            if (active_db) {
+                active_db->set_hnsw_ef_search(new_ef);
+                std::cout << "[SERVER] Set hnsw_ef_search = " << (int)new_ef << "\n";
+            }
+            char resp = '1';
+            if (!send_all(&resp, 1)) break;
         }
     }
 
@@ -218,6 +302,8 @@ int main() {
 #ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return 1;
+#else
+    signal(SIGPIPE, SIG_IGN);
 #endif
 
     SharedState state;
@@ -252,6 +338,10 @@ int main() {
         if (client_socket < 0) continue;
 #endif
 
+        // Disable Nagle on the accepted socket to avoid ~40ms delayed-ACK latency
+        int flag = 1;
+        setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(flag));
+
         // Each client gets its own detached thread.
         // The thread owns the socket and closes it when done.
         std::thread([client_socket, &state]() {
@@ -259,11 +349,9 @@ int main() {
             }).detach();
     }
 
-#ifdef _WIN32
     closesocket(server_socket);
+#ifdef _WIN32
     WSACleanup();
-#else
-    close(server_socket);
 #endif
     return 0;
 }

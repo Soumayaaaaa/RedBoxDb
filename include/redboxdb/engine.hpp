@@ -5,7 +5,9 @@
 #include <thread>
 #include <algorithm>
 #include <shared_mutex>
+#include <random>
 #include "redboxdb/storage_manager.hpp"
+#include "redboxdb/SpecificMetadata.hpp"
 
 namespace CoreEngine {
 
@@ -15,7 +17,7 @@ namespace CoreEngine {
         static constexpr size_t  TOMBSTONE_COMPACT_SLACK = 64;
         static constexpr int     PARALLEL_THRESHOLD    = 50000;
         static constexpr uint16_t  DEFAULT_CLUSTERS      = 1000;
-        static constexpr uint8_t DEFAULT_PROBES        = 1;
+        static constexpr uint8_t DEFAULT_PROBES        = 10;
         static constexpr uint64_t KMEANS_INIT_THRESHOLD = 10000;
 
         size_t dimension;
@@ -31,7 +33,11 @@ namespace CoreEngine {
 
         std::unordered_map<uint64_t, size_t> id_to_index;
 
+        // IVF in-memory index
         std::vector<std::vector<int>> cluster_index;
+
+        // HNSW RNG
+        std::mt19937 hnsw_rng;
 
         bool   use_avx2;
         size_t num_threads;
@@ -39,10 +45,17 @@ namespace CoreEngine {
         mutable std::shared_mutex rw_mutex;
 
     public:
+        // IVF constructor
         RedBoxVector(std::string file_name, size_t dim,
                      int     capacity   = default_capacity,
                      uint16_t k         = DEFAULT_CLUSTERS,
                      uint8_t num_probes = DEFAULT_PROBES);
+
+        // HNSW constructor
+        RedBoxVector(std::string file_name, size_t dim,
+                     int capacity,
+                     uint8_t hnsw_M,
+                     uint16_t hnsw_ef_construction);
 
         void     insert(uint64_t id, const std::vector<float>& vec);
         uint64_t insert_auto(const std::vector<float>& vec);
@@ -51,6 +64,8 @@ namespace CoreEngine {
         bool     remove(uint64_t id);
         uint32_t get_dim() const;
         bool     update(uint64_t id, const std::vector<float>& vec);
+        void     set_num_probes(uint8_t p);
+        void     set_hnsw_ef_search(uint16_t ef);
 
         // Tombstone helpers
         void load_tombstones();
@@ -60,6 +75,8 @@ namespace CoreEngine {
         // Legacy / status
         void saveToDisk(const std::string& filename);
         void loadFromDisk(const std::string& filename);
+
+        IndexType get_index_type() const { return _manager->get_index_type(); }
     };
 
 }
