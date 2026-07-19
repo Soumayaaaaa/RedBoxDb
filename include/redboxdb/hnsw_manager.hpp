@@ -179,7 +179,7 @@ namespace HnswManager {
     {
         struct FlatEntry { float dist; uint32_t slot; };
 
-        static constexpr int MAX_CAND = 128;
+        static constexpr int MAX_CAND = 256;
         FlatEntry cand[MAX_CAND];
         int n_cand = 0;
 
